@@ -1,0 +1,21 @@
+{
+  "1207756380635926598": {
+    "notificationChannelId": null,
+    "trackedCollections": {}
+  },
+  "1350665107889324073": {
+    "notificationChannelId": "1350665226147598386",
+    "trackedCollections": {
+      "0xae280ca8dfaaf852b0af828cd72391ce7874fbb6": {
+        "address": "0xae280ca8dfaaf852b0af828cd72391ce7874fbb6",
+        "source": "Direct Address",
+        "name": "Lil Monaliens",
+        "image": "https://img.reservoir.tools/images/v2/monad-testnet/i9YO%2F4yHXUdJsWcTqhqvfwRo1aTYuAtkK%2FYeNr9SJKbHr1i1MjkJSOA3EomyoDd5o6yBfFHPI98GSpO3sqS2%2FAubTaF%2BZ7TbuvQ5dzBXmS3Ca8926HW0AeHzdViSRoOGzSuKIqPYmzzEb8iA%2FouekEE26b7xnO%2B%2BkoxB8NO3Hz8wVLBqUgLWTS28f2Pde4HmrIEDqM%2F%2B0o4EWLLm82nmoA%3D%3D?width=250",
+        "description": "The special testnet collection \"Lil Monaliens\" shows the Monaliens in their innocent, childlike forms.",
+        "floorPrice": 0.01,
+        "addedAt": "2025-03-16T05:03:16.051Z",
+        "addedBy": "342322534542475266"
+      }
+    }
+  }
+}
