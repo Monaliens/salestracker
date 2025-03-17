@@ -328,67 +328,84 @@ async function fetchMagicEdenActivities(collectionAddress) {
   }
 }
 
-// Function to create a Discord embed for a sale notification
+// Function to create a Discord embed for sale notification
 function createSaleEmbed(sale) {
-  const collectionName = sale.collection?.name
-    || sale.collection?.id
-    || sale.collection
-    || sale.collectionAddress
-    || 'Unknown Collection';
-    
-  const tokenId = sale.tokenMint
-    || sale.token?.tokenMint
-    || sale.tokenId
-    || 'Unknown Token';
-
-  const price = sale.price
-    || sale.amount
-    || sale.value
-    || 'Unknown';
+  // Get collection name, prioritizing different possible formats
+  const collectionName = sale.collection?.name || 
+                         sale.collection?.id || 
+                         sale.collection || 
+                         'Unknown Collection';
+                         
+  // Get token ID from different possible formats                   
+  const tokenId = sale.token?.mintAddress || 
+                  sale.token?.tokenId || 
+                  sale.tokenId || 
+                  sale.token_id || 
+                  'Unknown';
+                  
+  // Get price from different possible formats
+  let price = sale.price || 
+              sale.amount || 
+              sale.value || 
+              'Unknown';
   
-  const embed = new EmbedBuilder()
+  // If price is a string that's not "Unknown", convert to number and format with 4 decimal places
+  if (price !== 'Unknown' && !isNaN(parseFloat(price))) {
+    price = parseFloat(price).toFixed(4);
+  }
+  
+  let embed = new EmbedBuilder()
     .setColor('#0099ff')
     .setTitle(`New Sale: ${collectionName}`)
     .setTimestamp()
-    .setFooter({ text: 'Source: Magic Eden' });
-  
+    .setFooter({ text: 'Source: Monad Explorer' });
+
+  // Add fields based on the available data
   if (tokenId) {
     embed.addFields({ name: 'Token ID', value: `${tokenId}`, inline: true });
   }
+  
   if (price) {
-    embed.addFields({ name: 'Price', value: `${price} MONAD`, inline: true });
+    embed.addFields({ name: 'Price', value: `${price} MON`, inline: true });
   }
-
-  const seller = sale.seller || sale.wallets?.seller || sale.sale?.sellerAddress;
+  
+  // Get seller address
+  const seller = sale.seller || 
+                 sale.from || 
+                 sale.sellerAddress;
+                 
   if (seller) {
     embed.addFields({ name: 'Seller', value: shortenAddress(seller), inline: true });
   }
-
-  const buyer = sale.buyer || sale.wallets?.buyer || sale.sale?.buyerAddress;
+  
+  // Get buyer address
+  const buyer = sale.buyer || 
+                sale.to || 
+                sale.buyerAddress;
+                
   if (buyer) {
     embed.addFields({ name: 'Buyer', value: shortenAddress(buyer), inline: true });
   }
-
-  if (sale.marketplace) {
-    embed.addFields({ name: 'Marketplace', value: sale.marketplace, inline: true });
-  }
-
-  // transaction hash
-  const txHash = sale.txHash || sale.signature || sale.transaction_hash || sale.txId;
+  
+  // Get transaction hash
+  const txHash = sale.txHash || 
+                 sale.hash || 
+                 sale.transaction || 
+                 sale.signature;
+                 
   if (txHash) {
-    embed.addFields({
-      name: 'Transaction',
-      value: `[View](https://explorer.monad.network/tx/${txHash})`,
-      inline: true
-    });
+    embed.addFields({ name: 'Transaction', value: `[View](https://explorer.monad.network/tx/${txHash})`, inline: true });
   }
-
+  
   // Add NFT image if available
-  const image = sale.token?.image || sale.image || sale.nft?.image || sale.metadata?.image;
+  const image = sale.token?.image || 
+                sale.image || 
+                sale.metadata?.image;
+                
   if (image) {
     embed.setImage(image);
   }
-
+  
   return embed;
 }
 
@@ -398,15 +415,17 @@ function shortenAddress(address) {
   return `${address.substring(0, 6)}...${address.substring(address.length - 4)}`;
 }
 
-/**
- *  MAIN function that processes new sales for every guild's tracked collections.
- *  Replaces the old "monitorCollectionStats" approach with direct "activities" calls.
- */
+// Function to process new sales and send notifications
 async function processSales() {
   try {
-    console.log("=================== PROCESSING SALES (activities) ===================");
-
-    // Clean up old cache entries (older than 1 hour) so we don't bloat memory
+    console.log("=================== PROCESSING SALES ===================");
+    debugCacheStatus(); // Add this line to show cache status
+    
+    // Track if we found any sales
+    let salesFound = false;
+    let notificationsSent = 0;
+    
+    // Clean up old cache entries (older than 1 hour)
     const now = Date.now();
     const ONE_HOUR = 60 * 60 * 1000;
     for (const [saleId, timestamp] of lastProcessedSales.magicEden.entries()) {
@@ -415,18 +434,18 @@ async function processSales() {
         console.log(`Removed old sale ID from cache: ${saleId}`);
       }
     }
-
-    let salesFound = 0;
-
-    // For each guild, fetch sales for each tracked collection
+    
+    // Process for each server with configuration
     for (const [guildId, serverConfig] of Object.entries(serverConfigs)) {
-      if (!serverConfig.trackedCollections ||
-          Object.keys(serverConfig.trackedCollections).length === 0 ||
+      // Skip if no collections are being tracked or no notification channel is set
+      if (!serverConfig.trackedCollections || 
+          Object.keys(serverConfig.trackedCollections).length === 0 || 
           !serverConfig.notificationChannelId) {
-        // no tracked collections or no channel
+        console.log(`Skipping guild ${guildId}: no collections tracked or no notification channel set`);
         continue;
       }
 
+      // Get the guild and channel
       const guild = client.guilds.cache.get(guildId);
       if (!guild) {
         console.log(`Guild not found: ${guildId}`);
@@ -439,55 +458,100 @@ async function processSales() {
         continue;
       }
 
-      console.log(`\nProcessing sales for guild: ${guild.name}`);
-      const trackedAddrs = Object.keys(serverConfig.trackedCollections);
+      console.log(`Processing sales for guild: ${guild.name}`);
+      console.log(`Total tracked collections: ${Object.keys(serverConfig.trackedCollections).length}`);
 
-      for (const address of trackedAddrs) {
-        // 1) Fetch up to N recent sales from Magic Eden
-        const recentSales = await fetchMagicEdenActivities(address);
+      // Try to update collection info periodically 
+      // (do this roughly every hour - based on a random chance)
+      if (Math.random() < 0.02) { // ~2% chance each run = ~once per hour if runs every minute
+        await updateCollectionInfo(guildId);
+      }
 
-        if (!recentSales || recentSales.length === 0) {
-          // no recent sales from the API
-          continue;
-        }
-
-        // 2) Sort sales by time (ascending)
-        recentSales.sort((a, b) => {
-          const timeA = a.blockTime || a.createdAt || 0;
-          const timeB = b.blockTime || b.createdAt || 0;
+      try {
+        // Process BlockVision sales instead of Magic Eden
+        console.log("Fetching sales via BlockVision API...");
+        const blockvisionSales = await fetchBlockvisionSales(serverConfig.trackedCollections);
+        console.log(`Detected ${blockvisionSales.length} sales via BlockVision API`);
+        
+        // Sort sales by timestamp if available to process oldest first
+        blockvisionSales.sort((a, b) => {
+          const timeA = new Date(a.createdAt).getTime() || 0;
+          const timeB = new Date(b.createdAt).getTime() || 0;
           return timeA - timeB;
         });
-
-        // 3) For each sale, check if we've already processed it
-        for (const sale of recentSales) {
-          const saleId = sale.id || `${address}_${sale.txHash || Date.now()}`;
-          const saleTime = sale.blockTime ? new Date(sale.blockTime * 1000) : new Date();
-
-          if (!lastProcessedSales.magicEden.has(saleId)) {
-            // 4) Mark it processed
+        
+        if (blockvisionSales.length > 0) {
+          salesFound = true;
+          
+          // Log all sales found
+          console.log("Sales detected:");
+          blockvisionSales.forEach((sale, index) => {
+            console.log(`Sale ${index + 1}/${blockvisionSales.length}:`, 
+              `collection=${sale.collection.id}`, 
+              `saleId=${sale.id}`,
+              `time=${sale.createdAt}`,
+              `processed=${lastProcessedSales.magicEden.has(sale.id)}`);
+          });
+        } else {
+          console.log("No sales detected via BlockVision API");
+        }
+        
+        // Examine each sale
+        for (const sale of blockvisionSales) {
+          // Get unique ID for sales
+          const saleId = sale.id || `blockvision_${Date.now()}`;
+          
+          // Get timestamp from sale or use current time
+          const timestamp = new Date(sale.createdAt).getTime() || Date.now();
+          const saleTime = new Date(timestamp).toISOString();
+          
+          console.log(`Processing sale with ID: ${saleId} from ${saleTime}`);
+          console.log(`Already processed? ${lastProcessedSales.magicEden.has(saleId)}`);
+          
+          // If we haven't processed this sale in the cache period
+          if (saleId && !lastProcessedSales.magicEden.has(saleId)) {
+            // Add to processed map with current timestamp
             lastProcessedSales.magicEden.set(saleId, Date.now());
-            // trim if needed
+            console.log(`Added sale ID to processed cache: ${saleId}`);
+            console.log(`Cache size now: ${lastProcessedSales.magicEden.size}`);
+            
+            // Trim cache if needed
             if (lastProcessedSales.magicEden.size > MAX_CACHE_SIZE) {
+              // Get oldest entry (first item)
               const oldestKey = Array.from(lastProcessedSales.magicEden.keys())[0];
               lastProcessedSales.magicEden.delete(oldestKey);
+              console.log(`Trimmed oldest sale from cache: ${oldestKey}`);
+              console.log(`Cache size after trim: ${lastProcessedSales.magicEden.size}`);
             }
-
-            // 5) Create embed + send message
+            
+            // Send notification to Discord
+            console.log("Creating embed for sale notification");
             const embed = createSaleEmbed(sale);
-            console.log(`Sending sale notification for sale ID: ${saleId}`);
+            
+            const collectionName = sale.collection?.name || 
+                                 sale.collection?.id || 
+                                 sale.collection || 
+                                 'Unknown Collection';
+            
+            console.log(`🔔 SENDING NOTIFICATION for ${collectionName} sale (${saleId})`);
             await channel.send({ embeds: [embed] });
-            salesFound++;
+            console.log(`✅ NOTIFICATION SENT SUCCESSFULLY for ${collectionName}!`);
+            notificationsSent++;
+          } else {
+            console.log(`Skipping sale ID ${saleId} - already processed or missing ID`);
           }
         }
+      } catch (error) {
+        console.error(`Error processing sales for guild ${guild.name}:`, error.message);
+        console.error("Full error:", error);
       }
     }
-
-    if (salesFound === 0) {
-      console.log("No new sales found across all guilds.");
+    
+    if (!salesFound) {
+      console.log("No sales found across all guilds");
     } else {
-      console.log(`🔔 TOTAL NEW SALES NOTIFIED: ${salesFound}`);
+      console.log(`🔔 SALES PROCESSING COMPLETE - Sent ${notificationsSent} notifications`);
     }
-    console.log("=================== PROCESSING COMPLETE ===================\n");
   } catch (error) {
     console.error("Error in processSales:", error.message);
     console.error("Full error:", error);
@@ -1214,4 +1278,156 @@ async function monitorCollectionStats(collections) {
   }
   
   return detectedSales;
+}
+
+// Function to fetch NFT sales from BlockVision API
+async function fetchBlockvisionSales(collections) {
+  if (!collections || Object.keys(collections).length === 0) {
+    console.log("No collections to monitor for sales");
+    return [];
+  }
+
+  const collectionAddresses = Object.keys(collections).map(key => {
+    return collections[key].address;
+  });
+  
+  console.log("Monitoring collections with BlockVision API:", collectionAddresses);
+  
+  // Store all detected sales here
+  const detectedSales = [];
+  
+  try {
+    // BlockVision API configuration
+    const BLOCKVISION_API_KEY = "2uNd00ZGSxu7neBBVfLyhdpnXtD";
+    const BLOCKVISION_API_URL = "https://api.blockvision.org/v2/monad/account/activities";
+    
+    // For each collection, fetch recent activities
+    for (const collectionAddress of collectionAddresses) {
+      console.log(`Checking activities for collection: ${collectionAddress}`);
+      
+      // Make request to BlockVision API
+      const response = await axios.get(BLOCKVISION_API_URL, {
+        headers: {
+          'accept': 'application/json',
+          'X-API-KEY': BLOCKVISION_API_KEY
+        },
+        params: {
+          address: collectionAddress,
+          limit: 20,
+          offset: 0
+        },
+        timeout: 10000
+      });
+      
+      if (!response.data || !response.data.result || !response.data.result.data) {
+        console.log(`No data returned from BlockVision for ${collectionAddress}`);
+        continue;
+      }
+      
+      console.log(`BlockVision response status: ${response.status}`);
+      
+      // Process the activities
+      const activities = response.data.result.data || [];
+      console.log(`Found ${activities.length} activities for ${collectionAddress}`);
+      
+      // Log first activity if available for debugging
+      if (activities.length > 0) {
+        console.log(`Sample activity: ${JSON.stringify(activities[0], null, 2).substring(0, 300)}...`);
+      }
+      
+      // Filter for activities that look like sales (transfers with MON payment)
+      for (const activity of activities) {
+        // Try to identify if this is a sale transaction
+        const isSale = isNFTSale(activity);
+        
+        if (isSale) {
+          console.log(`🔔 Detected sale via BlockVision for collection ${collectionAddress}`);
+          
+          const sale = {
+            id: activity.hash || `blockvision_${Date.now()}`,
+            collection: {
+              id: collectionAddress,
+              name: collections[collectionAddress]?.name || `Collection ${collectionAddress.substring(0, 6)}...`
+            },
+            price: extractPrice(activity),
+            type: 'Sale',
+            createdAt: new Date(activity.timestamp).toISOString(),
+            buyer: activity.to,
+            seller: activity.from,
+            token: {
+              image: null, // We'll need to fetch this separately if needed
+              tokenId: extractTokenId(activity)
+            },
+            transaction: activity.hash
+          };
+          
+          detectedSales.push(sale);
+        }
+      }
+    }
+    
+    return detectedSales;
+  } catch (error) {
+    console.error("Error fetching BlockVision sales:", error.message);
+    if (error.response) {
+      console.error("Response status:", error.response.status);
+      console.error("Response data:", error.response.data);
+    }
+    return [];
+  }
+}
+
+// Helper function to determine if an activity is an NFT sale (transfer with MON payment)
+function isNFTSale(activity) {
+  // Check for NFT-related activities that include value transfers
+  
+  // The API seems to return activities with txName that might indicate NFT operations
+  const isNFTOperation = activity.txName && (
+    activity.txName.includes('Transfer') ||
+    activity.txName.includes('Mint') ||
+    activity.txName.includes('Buy') ||
+    activity.txName.includes('Sell') ||
+    activity.txName.includes('Sale') ||
+    activity.txName.includes('NFT') ||
+    activity.txName.includes('Token') ||
+    activity.txName === 'Contract Interaction'
+  );
+  
+  // Check if there's a value associated (payment)
+  const hasValue = activity.value && parseFloat(activity.value) > 0;
+  
+  // Log detailed information for debugging
+  if (isNFTOperation) {
+    console.log(`Potential NFT operation: ${activity.txName}, hasValue: ${hasValue}, value: ${activity.value}`);
+  }
+  
+  // For now, we'll consider activities with NFT operation names and value transfers as sales
+  return isNFTOperation && hasValue;
+}
+
+// Helper function to extract price from activity
+function extractPrice(activity) {
+  // Extract value and convert to MON
+  if (activity.value) {
+    return parseFloat(activity.value).toFixed(4);
+  }
+  
+  // If there's transaction fee, use that as a fallback
+  if (activity.transactionFee) {
+    return activity.transactionFee;
+  }
+  
+  return "Unknown";
+}
+
+// Helper function to extract token ID from activity
+function extractTokenId(activity) {
+  // Try to extract token ID from activity data
+  // This is placeholder logic - we'll need to adjust based on the actual data format
+  if (activity.tokenId) {
+    return activity.tokenId;
+  }
+  
+  // If we can't determine the token ID, use the transaction hash as a unique identifier
+  return `tx-${activity.hash.substring(0, 8)}`;
 }
