@@ -1,13 +1,13 @@
-# Discord NFT Buy Bot for Monad Testnet
+# Discord NFT Buy Bot for Monad
 
-A Discord bot that sends notifications for NFT sales on the Monad testnet blockchain.
+A Discord bot that sends notifications for NFT sales on the Monad blockchain.
 
 ## Features
 
-- Track NFT sales from specific collections on Monad testnet
-- Support for Magic Eden collection URLs and direct addresses
+- Track NFT sales from specific collections on Monad 
+- Support for collection addresses
 - Ephemeral responses (only visible to command user) to reduce chat clutter
-- Fetches data from Magic Eden API
+- Fetches data from BlockVision API for Monad
 - Multi-server support: Each Discord server can configure its own notification channel and collections
 - Real-time notifications in your Discord server
 - Collection info display with name, image and details (when available)
@@ -64,14 +64,14 @@ This bot supports both legacy commands (!) and slash commands (/). Slash command
 
 ### Slash Commands (recommended)
 - `/setchannel` - Set the current channel for NFT sale notifications (Admin only)
-- `/track <collection>` - Start tracking sales for a collection (accepts Magic Eden URLs or addresses)
+- `/track <collection>` - Start tracking sales for a collection (accepts collection addresses)
 - `/untrack <collection>` - Stop tracking sales for a specific collection
 - `/list` - Show all currently tracked collections
 - `/help` - Show all available commands
 
 ### Legacy Commands (being phased out)
 - `!setchannel` - Set the current channel for NFT sale notifications (Admin only)
-- `!track <collection>` - Start tracking sales for a collection (accepts Magic Eden URLs or addresses)
+- `!track <collection>` - Start tracking sales for a collection (accepts collection addresses)
 - `!untrack <collection>` - Stop tracking sales for a specific collection
 - `!list` - Show all currently tracked collections
 - `!help` - Show all available commands
@@ -89,11 +89,6 @@ This bot supports both legacy commands (!) and slash commands (/). Slash command
 /track 0x1234567890abcdef1234567890abcdef12345678
 ```
 
-3. Or by Magic Eden URL:
-```
-/track https://magiceden.io/collections/monad-testnet/0x03e0407332c6584e82b3ce5662184baf0261f179
-```
-
 ## Multi-Server Support
 
 The bot stores configuration for each server separately, allowing different Discord servers to have their own:
@@ -104,8 +99,8 @@ All settings are saved between bot restarts.
 
 ## Notes
 
-- The bot polls the Magic Eden API at the interval specified in your `.env` file (default is 1 minute)
-- Make sure to set the correct chain (Monad testnet) in your API calls
+- The bot polls the BlockVision API at the interval specified in your `.env` file (default is 1 minute)
 - The bot keeps track of processed sales to avoid duplicate notifications
 - Slash command responses are ephemeral (only visible to the user who ran the command)
 - Regular NFT sale notifications are public in the configured channel 
+- The bot uses BlockVision API to track NFT activities on Monad 
