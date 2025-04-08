@@ -5,7 +5,7 @@
 # 2. GITHUB_USER ve REPO_NAME değişkenlerini kendi değerlerinizle güncelleyin
 
 # Bu değerleri kendi bilgilerinizle değiştirin
-GITHUB_USER="KULLANICI_ADINIZ"
+GITHUB_USER="aezchain"
 REPO_NAME="discord-nft-sales-bot"
 
 # Git deposu başlat
