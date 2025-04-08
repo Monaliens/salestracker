@@ -1,20 +1,32 @@
 {
-  "name": "discordbuyboy",
+  "name": "discord-nft-sales-bot",
   "version": "1.0.0",
+  "description": "Discord bot that tracks and notifies about NFT sales on Monad blockchain",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node index.js"
+    "start": "node index.js",
+    "dev": "nodemon index.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "Discord bot for notifying NFT sales on Monad testnet",
+  "keywords": [
+    "discord",
+    "bot",
+    "nft",
+    "sales",
+    "monad",
+    "blockchain"
+  ],
+  "author": "Monalien Tech",
+  "license": "MIT",
   "dependencies": {
-    "axios": "^1.6.7",
+    "axios": "^1.6.2",
     "discord.js": "^14.14.1",
-    "dotenv": "^16.4.5",
+    "dotenv": "^16.3.1",
     "node-cron": "^3.0.3"
   },
-  "devDependencies": {}
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=16.9.0"
+  }
 }

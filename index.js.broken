@@ -31,99 +31,6 @@ const config = {
   discordToken: process.env.DISCORD_TOKEN,
   discordAppId: process.env.DISCORD_APP_ID,
   refreshInterval: parseInt(process.env.REFRESH_INTERVAL) || 60000, // Default to 1 minute
-  // Add whitelist configuration - comma-separated list of guild IDs
-  whitelistedGuilds: []
-};
-
-// Parse whitelist from environment variable
-if (process.env.WHITELISTED_GUILDS) {
-  const whitelistString = process.env.WHITELISTED_GUILDS.trim();
-  if (whitelistString) {
-    config.whitelistedGuilds = whitelistString.split(',').map(id => id.trim());
-    console.log(`Loaded ${config.whitelistedGuilds.length} whitelisted guild IDs from .env`);
-  }
-}
-
-// API key management
-const apiKeyManager = {
-  reservoirKeys: [
-    'c65ab60c-61a5-5e1c-bb44-d4cc4c0af8a0', // Main key
-    '2nd-reservoir-api-key-goes-here',       // Backup key 1
-    '3rd-reservoir-api-key-goes-here'        // Backup key 2
-  ],
-  currentKeyIndex: 0,
-  rateLimitDetected: {},
-  
-  getCurrentKey() {
-    return this.reservoirKeys[this.currentKeyIndex];
-  },
-  
-  resetRateLimits() {
-    const now = Date.now();
-    const oneHourAgo = now - (60 * 60 * 1000);
-    
-    // Clear rate limit detections older than 1 hour
-    for (const key in this.rateLimitDetected) {
-      if (this.rateLimitDetected[key] < oneHourAgo) {
-        console.log(`🔄 Resetting rate limit status for key ${this.maskApiKey(key)}`);
-        delete this.rateLimitDetected[key];
-      }
-    }
-  },
-  
-  maskApiKey(key) {
-    if (!key || key.length < 8) return '****';
-    return `${key.substring(0, 4)}...${key.substring(key.length - 4)}`;
-  },
-  
-  rotateKey() {
-    const previousKey = this.getCurrentKey();
-    const previousIndex = this.currentKeyIndex;
-    const now = Date.now();
-    
-    // Mark current key as rate limited
-    this.rateLimitDetected[previousKey] = now;
-    
-    // Try to find a key that hasn't been rate limited in the last 5 minutes
-    const fiveMinutesAgo = now - (5 * 60 * 1000);
-    let foundUsableKey = false;
-    
-    for (let i = 0; i < this.reservoirKeys.length; i++) {
-      // Skip to next key index
-      this.currentKeyIndex = (this.currentKeyIndex + 1) % this.reservoirKeys.length;
-      const nextKey = this.getCurrentKey();
-      
-      // Check if this key has hit rate limits recently
-      if (!this.rateLimitDetected[nextKey] || this.rateLimitDetected[nextKey] < fiveMinutesAgo) {
-        foundUsableKey = true;
-        console.log(`🔄 Rotating from API key ${this.maskApiKey(previousKey)} to ${this.maskApiKey(nextKey)}`);
-        break;
-      }
-    }
-    
-    if (!foundUsableKey) {
-      // If all keys are rate limited, just use the next one anyway
-      console.log(`⚠️ All API keys are rate limited, using key ${this.maskApiKey(this.getCurrentKey())}`);
-    }
-    
-    // If we're back to the same key, log that all keys are rate limited
-    if (previousIndex === this.currentKeyIndex) {
-      console.log(`⚠️ Tried all API keys, all are rate limited. Using original key again.`);
-    }
-    
-    return this.getCurrentKey();
-  },
-  
-  handleApiError(error) {
-    // Check if this is a rate limit error (429 Too Many Requests or 403 Forbidden)
-    if (error.response && (error.response.status === 429 || error.response.status === 403)) {
-      console.log(`⚠️ Rate limit detected for API key ${this.maskApiKey(this.getCurrentKey())}`);
-      return this.rotateKey();
-    }
-    
-    // Not a rate limit error
-    return this.getCurrentKey();
-  }
 };
 
 // File to store server configurations
@@ -144,15 +51,13 @@ const MAX_CACHE_SIZE = 100;
 // Slash commands definition
 const commands = [
   {
+    name: 'setchannel',
+    description: 'Set the current channel for NFT sale notifications (Admin only)'
+  },
+  {
     name: 'track',
-    description: 'Start tracking sales for a specific collection in a channel (Admin only)',
+    description: 'Start tracking sales for a specific collection',
     options: [
-      {
-        name: 'channel',
-        description: 'Channel to send notifications to',
-        type: ApplicationCommandOptionType.Channel,
-        required: true
-      },
       {
         name: 'collection',
         description: 'Collection address to track',
@@ -163,7 +68,7 @@ const commands = [
   },
   {
     name: 'untrack',
-    description: 'Stop tracking sales for a specific collection (Admin only)',
+    description: 'Stop tracking sales for a specific collection',
     options: [
       {
         name: 'collection',
@@ -175,15 +80,27 @@ const commands = [
   },
   {
     name: 'list',
-    description: 'Show all currently tracked collections (Admin only)'
+    description: 'Show all currently tracked collections'
   },
   {
     name: 'help',
-    description: 'Show all available commands (Admin only)'
+    description: 'Show all available commands'
+  },
+  {
+    name: 'test',
+    description: 'Send a test notification to verify the bot can post messages'
   },
   {
     name: 'checksales',
-    description: 'Force an immediate check for new sales (Admin only)'
+    description: 'Force an immediate check for new sales'
+  },
+  {
+    name: 'debug-info',
+    description: 'Show bot and channel configuration information for troubleshooting (Admin only)'
+  },
+  {
+    name: 'refresh-images',
+    description: 'Refresh all collection images (Admin only)'
   }
 ];
 
@@ -254,197 +171,70 @@ function initServerConfig(guildId) {
   return serverConfigs[guildId];
 }
 
-// Function to fetch token metadata via Reservoir API
+// Function to fetch token metadata from Reservoir API (including image)
 async function fetchTokenMetadata(collectionAddress, tokenId) {
-  if (!collectionAddress || !tokenId) {
-    console.log('Missing collection address or token ID for fetchTokenMetadata');
-    return null;
-  }
-  
-  console.log(`Fetching token metadata for ${collectionAddress} token ${tokenId}`);
-  
   try {
-    // Use v6 API - the newer structure
-    const url = `https://api-monad-testnet.reservoir.tools/tokens/v6`;
-    console.log(`Making API request to: ${url}`);
-    
-    const response = await axios.get(url, {
-      headers: {
-        'accept': '*/*',
-        'x-api-key': apiKeyManager.getCurrentKey()
-      },
-      params: {
-        contract: collectionAddress,
-        tokenId: tokenId,
-      },
-      timeout: 5000
-    });
-    
-    if (response.status === 200 && response.data && response.data.tokens && response.data.tokens.length > 0) {
-      const token = response.data.tokens[0];
-      console.log(`Found token metadata from Reservoir API: ${token.token?.name || 'Unnamed'}`);
-      
-      // Log the structure to debug
-      console.log('Token data structure:', JSON.stringify(token).substring(0, 300));
-      
-      // Check different possible locations for the image in the response structure
-      const imageUrl = cleanImageUrl(
-        token.token?.image || 
-        token.tokenImage || 
-        token.image || 
-        null
-      );
-      
-      console.log(`Token image URL: ${imageUrl || 'Not found'}`);
-      
-      return {
-        name: token.token?.name || `Token #${tokenId}`,
-        image: imageUrl,
-        description: token.token?.description || null
-      };
-    } else {
-      console.log(`No token metadata found for ${collectionAddress} token ${tokenId}`);
+    if (!collectionAddress || !tokenId) {
+      console.log("⚠️ Missing collection address or token ID for metadata fetch");
       return null;
     }
-  } catch (error) {
-    console.error(`Error fetching token metadata for ${collectionAddress} token ${tokenId}:`, error.message);
-    if (error.response) {
-      console.error('Response status:', error.response.status);
-      
-      // Check if this is a rate limit error and rotate keys if needed
-      apiKeyManager.handleApiError(error);
-      
-      if (error.response.data) {
-        console.error('Response data:', JSON.stringify(error.response.data).substring(0, 200));
-      }
-    }
-    return null;
-  }
-}
 
-// Update fetchCollectionInfo to handle automatic key rotation
-async function fetchCollectionInfo(collectionAddress) {
-  if (!collectionAddress) {
-    console.log('No collection address provided for fetchCollectionInfo');
-    return null;
-  }
-
-  console.log(`Fetching collection info for: ${collectionAddress}`);
-  
-  // Special handling for Nad Name Service
-  if (collectionAddress === '0x3019bf1dfb84e5b46ca9d0eec37de08a59a41308') {
-    console.log('Using special image for Nad Name Service');
-    return {
-      name: 'Nad Name Service',
-      image: 'https://pbs.twimg.com/profile_images/1658957832532230145/WyFdTZ-L_400x400.jpg',
-      description: 'Nad Name Service is the native naming protocol for Monad.'
-    };
-  }
-  
-  // Try Magic Eden API first
-  try {
-    console.log('Trying Magic Eden API first...');
-    const url = `https://api-mainnet.magiceden.dev/v3/rtp/monad-testnet/collections/v7`;
+    console.log(`🔍 Fetching token metadata for: ${collectionAddress} - Token #${tokenId}`);
     
-    const response = await axios.get(url, {
+    // Reservoir API endpoint for token metadata - using v6 API
+    const tokenUrl = `https://api-monad-testnet.reservoir.tools/tokens/v6`;
+    
+    const response = await axios.get(tokenUrl, {
       headers: {
         'accept': '*/*',
-        'x-api-key': apiKeyManager.getCurrentKey()
+        'x-api-key': 'demo-api-key' // Use your API key here if needed
       },
       params: {
-        contract: collectionAddress,
+        'collection': collectionAddress,
+        'tokens': `${collectionAddress}:${tokenId}` // Format for Reservoir API v6
       },
       timeout: 5000
     });
-
-    if (response.status === 200 && response.data) {
-      console.log(`Magic Eden API response:`, JSON.stringify(response.data).substring(0, 300));
+    
+    console.log(`Token API response status: ${response.status}`);
+    
+    if (response.data && response.data.tokens && response.data.tokens.length > 0) {
+      const tokenData = response.data.tokens[0];
+      console.log(`✅ Found token metadata for ${tokenId}`);
       
-      // Extract collection name and image from response
-      const collection = response.data;
+      // Log a sample of the token data for debugging
+      console.log(`Token data sample: ${JSON.stringify(tokenData).substring(0, 300)}...`);
       
-      // Check for different possible image field names in the API response
-      const imageUrl = cleanImageUrl(
-        collection.image || 
-        collection.imageUrl || 
-        collection.logo ||
-        collection.logoURI ||
-        null
+      // Extract image from v6 API structure and clean it
+      const tokenImage = cleanImageUrl(
+        tokenData.token?.image || 
+        tokenData.image || 
+        tokenData.token?.tokenImage
       );
       
-      if (collection.name) {
-        console.log(`Found collection name from Magic Eden: ${collection.name}`);
-        console.log(`Collection image: ${imageUrl || 'None found'}`);
-        
-        return {
-          name: collection.name,
-          image: imageUrl,
-          description: collection.description || null
-        };
-      }
-    }
-    
-    console.log(`No collection data found from Magic Eden for ${collectionAddress}`);
-  } catch (error) {
-    console.error(`Error fetching collection info from Magic Eden:`, error.message);
-    if (error.response) {
-      console.error('Response status:', error.response.status);
+      const tokenName = 
+        tokenData.token?.name || 
+        tokenData.name || 
+        `Token #${tokenId}`;
       
-      // Check if this is a rate limit error and rotate keys if needed
-      apiKeyManager.handleApiError(error);
+      console.log(`Token image URL found: ${tokenImage || 'none'}`);
+      
+      return {
+        image: tokenImage,
+        name: tokenName,
+        attributes: tokenData.token?.attributes || tokenData.attributes || []
+      };
     }
-  }
-  
-  // Fallback to Reservoir API
-  try {
-    console.log('Falling back to Reservoir API...');
-    const url = `https://api-monad-testnet.reservoir.tools/collections/v6`;
-    
-    const response = await axios.get(url, {
-      params: {
-        contract: collectionAddress,
-      },
-      headers: {
-        'accept': '*/*',
-        'x-api-key': apiKeyManager.getCurrentKey()
-      },
-      timeout: 5000
-    });
 
-    if (response.status === 200 && response.data && response.data.collections && response.data.collections.length > 0) {
-      const collection = response.data.collections[0];
-      console.log(`Found collection info from Reservoir: ${collection.name}`);
-      
-      // Log the structure to debug
-      console.log('Collection data structure:', JSON.stringify(collection).substring(0, 300));
-      
-      const imageUrl = cleanImageUrl(collection.image || collection.collectionImage || null);
-      
-      return {
-        name: collection.name || `Monad Collection ${collectionAddress.substring(0, 8)}...`,
-        image: imageUrl,
-        description: collection.description || null,
-        floorPrice: collection.floorAsk?.price?.amount?.native || null,
-        tokenCount: collection.tokenCount || null
-      };
-    } else {
-      console.log(`No collection data found from Reservoir for ${collectionAddress}`);
-      return {
-        name: `Monad Collection ${collectionAddress.substring(0, 8)}...`
-      };
-    }
+    console.log(`⚠️ No token metadata found for ${tokenId}`);
+    return null;
   } catch (error) {
-    console.error(`Error fetching collection info from Reservoir:`, error.message);
+    console.error(`❌ Error fetching token metadata: ${error.message}`);
     if (error.response) {
-      console.error('Response status:', error.response.status);
-      
-      // Check if this is a rate limit error and rotate keys if needed
-      apiKeyManager.handleApiError(error);
+      console.error("Response status:", error.response.status);
+      console.error("Response data:", JSON.stringify(error.response.data).substring(0, 500));
     }
-    
-    return {
-      name: `Monad Collection ${collectionAddress.substring(0, 8)}...`
-    };
+    return null;
   }
 }
 
@@ -498,69 +288,45 @@ function createSaleEmbed(sale) {
                          
   // Get token ID and name
   const tokenId = sale.token?.tokenId || 'Unknown';
-  const tokenName = sale.token?.name || collectionName;
+  const tokenName = sale.token?.name || null;
                   
   // Get price from different possible formats
   let price = sale.price || 'Unknown';
   
-  // If price is a string that's not "Unknown", convert to number and format nicely
+  // If price is a string that's not "Unknown", convert to number and format with 4 decimal places
   if (price !== 'Unknown' && !isNaN(parseFloat(price))) {
-    // Convert to number first
-    const num = parseFloat(price);
-    // Use toLocaleString with proper options to handle decimal places
-    price = num.toLocaleString('en-US', {
-      minimumFractionDigits: 1,
-      maximumFractionDigits: 4
-    });
+    price = parseFloat(price).toFixed(4);
   }
   
   // Find and validate NFT image URL
   const imageUrl = cleanImageUrl(sale.token?.image);
   
-  // Format timestamp nicely if it exists and is valid
-  let saleTime = null;
-  try {
-    const timestamp = new Date(sale.createdAt);
-    // Check if date is valid
-    if (!isNaN(timestamp.getTime())) {
-      saleTime = timestamp.toLocaleString('en-US', {
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit'
-      });
-    }
-  } catch (e) {
-    console.log('Invalid timestamp format, skipping time display');
-  }
+  // Format timestamp nicely
+  const saleTime = new Date(sale.createdAt).toLocaleString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
   
   // Get transaction hash
   const txHash = sale.transaction || sale.txHash;
-  const txUrl = `https://testnet.monadexplorer.com/tx/${txHash}`;
+  const txUrl = `https://explorer.monad.network/tx/${txHash}`;
   
   // Use blue sidebar color (#007bff) like in the first image
   let embedColor = '#007bff';
   
-  // Create the title that links to transaction
-  const title = 'New Sale!';
-  
-  // Create the custom format showing NFT Name #tokenId has sold for X MON
-  let saleDescription = `**${tokenName} #${tokenId} has sold for ${price} MON**`;
-  
-  // Only add time if it's valid
-  // Time display has been removed per user request
-  /*
-  if (saleTime) {
-    saleDescription += `\n\n**Time:** ${saleTime}`;
-  }
-  */
+  // Create a title that matches the format in the screenshot and prominently displays collection name
+  const title = `New Sale! ${collectionName}`;
   
   // Create the embed with the styling matching the screenshot
   let embed = new EmbedBuilder()
     .setColor(embedColor)
     .setTitle(title)
-    .setURL(txUrl) // Make the title clickable with the transaction URL
-    .setDescription(saleDescription)
+    // Add collection name as the first field
+    .addFields({ name: '📁 Collection', value: `**${collectionName}**`, inline: false })
+    // Add description with token ID, price and time on separate lines
+    .setDescription(`**Token ID:** ${tokenId}\n\n**Price:** ${price} MON\n\n**Time:** ${saleTime}`)
     .setTimestamp();
   
   // Add token image if available and valid
@@ -573,8 +339,8 @@ function createSaleEmbed(sale) {
   
   // Add footer with source and transaction hash
   embed.setFooter({ 
-    text: `👽 Made with Monalien Tech`,
-    iconURL: 'https://cdn.discordapp.com/attachments/925536605738471425/1198969003852148797/A-27.png'
+    text: `Source: Reservoir | ${shortenAddress(txHash)}`,
+    iconURL: 'https://reservoir.tools/reservoir.svg'
   });
   
   // Add transaction and addresses to fields
@@ -585,7 +351,7 @@ function createSaleEmbed(sale) {
   if (seller) {
     fields.push({ 
       name: 'Seller', 
-      value: `[${shortenAddress(seller)}](https://testnet.monadexplorer.com/address/${seller})`, 
+      value: `[${shortenAddress(seller)}](https://explorer.monad.network/address/${seller})`, 
       inline: true 
     });
   }
@@ -595,7 +361,16 @@ function createSaleEmbed(sale) {
   if (buyer) {
     fields.push({ 
       name: 'Buyer', 
-      value: `[${shortenAddress(buyer)}](https://testnet.monadexplorer.com/address/${buyer})`, 
+      value: `[${shortenAddress(buyer)}](https://explorer.monad.network/address/${buyer})`, 
+      inline: true 
+    });
+  }
+  
+  // Add view transaction button
+  if (txHash) {
+    fields.push({ 
+      name: 'Transaction', 
+      value: `[View on Explorer](${txUrl})`, 
       inline: true 
     });
   }
@@ -650,7 +425,7 @@ async function fetchReservoirSales(collections) {
     console.log("No collections to monitor for sales");
     return [];
   }
-  
+
   console.log("🔍 Monitoring collections with Reservoir API:", collections);
   
   // Store all detected sales here
@@ -658,7 +433,7 @@ async function fetchReservoirSales(collections) {
   
   try {
     // Reservoir API configuration
-    const RESERVOIR_API_KEY = apiKeyManager.getCurrentKey();
+    const RESERVOIR_API_KEY = "demo-api-key"; // Replace with your actual API key
     const RESERVOIR_API_URL = "https://api-monad-testnet.reservoir.tools/collections/activity/v6";
     
     // For each collection, fetch recent activities
@@ -700,8 +475,8 @@ async function fetchReservoirSales(collections) {
       // Log first activity if available for debugging
       if (activities.length > 0) {
         console.log(`📝 Sample activity: ${JSON.stringify(activities[0], null, 2)}`);
-       }
-       
+      }
+      
       // Process each sale activity
       for (const activity of activities) {
         if (activity.type === 'sale') {
@@ -759,18 +534,15 @@ async function fetchReservoirSales(collections) {
       }
       
       console.log(`📊 Summary for ${collectionAddress}: ${activities.filter(a => a.type === 'sale').length} sales detected out of ${activities.length} activities`);
-     }
-  
-  console.log(`📋 Total sales detected: ${detectedSales.length}`);
-  return detectedSales;
+    }
+    
+    console.log(`📋 Total sales detected: ${detectedSales.length}`);
+    return detectedSales;
   } catch (error) {
     console.error("❌ Error fetching Reservoir sales:", error.message);
     if (error.response) {
       console.error("Response status:", error.response.status);
       console.error("Response data:", JSON.stringify(error.response.data).substring(0, 500));
-      
-      // Try with a different API key if rate limited
-      apiKeyManager.handleApiError(error);
     } else if (error.request) {
       console.error("No response received:", error.request);
     } else {
@@ -996,35 +768,9 @@ function validateCollectionAddress(address) {
   return true;
 }
 
-// Function to check if a guild is whitelisted
-function isGuildWhitelisted(guildId) {
-  // Convert to string for consistent comparison
-  const guildIdStr = String(guildId);
-  
-  // If whitelist is empty, allow all guilds (for backward compatibility)
-  if (!config.whitelistedGuilds || config.whitelistedGuilds.length === 0) {
-    return true;
-  }
-  
-  // Check if the guild ID is in the whitelist
-  const isWhitelisted = config.whitelistedGuilds.some(id => String(id) === guildIdStr);
-  return isWhitelisted;
-}
-
 // Handle slash commands
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isCommand() && !interaction.isButton()) return;
-  
-  // Check if the guild is whitelisted
-  if (interaction.guildId && !isGuildWhitelisted(interaction.guildId)) {
-    if (interaction.isCommand()) {
-      await interaction.reply({ 
-        content: '⛔ This server is not whitelisted. Bot functionality is restricted. Please contact the bot owner to request access.', 
-        ephemeral: true 
-      });
-    }
-    return;
-  }
   
   try {
     // Handle button interactions
@@ -1179,9 +925,7 @@ client.on('interactionCreate', async (interaction) => {
         await interaction.deferReply({ ephemeral: true });
         
         try {
-          const channelOption = interaction.options.getChannel('channel');
           const collectionInput = interaction.options.getString('collection');
-          
           if (!collectionInput) {
             await interaction.editReply('Please provide a collection address to track.');
             return;
@@ -1205,8 +949,11 @@ client.on('interactionCreate', async (interaction) => {
             initServerConfig(interaction.guildId);
           }
           
-          // Set notification channel to the specified channel
-          serverConfigs[interaction.guildId].notificationChannelId = channelOption.id;
+          // Check if notifications channel is set
+          if (!serverConfigs[interaction.guildId].notificationChannelId) {
+            await interaction.editReply('Please set a notification channel first using /setchannel command.');
+            return;
+          }
           
           // Check if collection is already tracked
           if (serverConfigs[interaction.guildId].trackedCollections[address]) {
@@ -1262,7 +1009,7 @@ client.on('interactionCreate', async (interaction) => {
             .setDescription(`Successfully added to tracking list.`)
             .addFields(
               { name: 'Address', value: `${address}` },
-              { name: 'Notification Channel', value: `<#${channelOption.id}>`, inline: true },
+              { name: 'Source', value: collectionData.source || 'Contract Address', inline: true },
               { name: 'Added By', value: `@${interaction.user.username}`, inline: true }
             )
             .addFields(
@@ -1419,6 +1166,59 @@ client.on('interactionCreate', async (interaction) => {
         break;
       }
       
+      case 'test': {
+        await interaction.deferReply({ ephemeral: true });
+        try {
+          if (!serverConfig.notificationChannelId) {
+            await interaction.editReply({ 
+              content: 'No notification channel set for this server. Use /setchannel to set one.', 
+              ephemeral: true 
+            });
+            return;
+          }
+          
+          const channel = interaction.guild.channels.cache.get(serverConfig.notificationChannelId);
+          if (!channel) {
+            await interaction.editReply({ 
+              content: 'The notification channel could not be found. It may have been deleted.', 
+              ephemeral: true 
+            });
+            return;
+          }
+          
+          const perms = channel.permissionsFor(client.user);
+          if (!perms.has('SendMessages') || !perms.has('EmbedLinks')) {
+            await interaction.editReply({ 
+              content: `The bot doesn't have permission to send messages or embeds in <#${channel.id}>. Please update channel permissions.`, 
+              ephemeral: true 
+            });
+            return;
+          }
+          
+          // Send test notification
+          const success = await testNotification(guildId);
+          
+          if (success) {
+            await interaction.editReply({ 
+              content: `✅ Test notification sent successfully to <#${channel.id}>! If you can see it, the bot is working correctly.`, 
+              ephemeral: true 
+            });
+          } else {
+            await interaction.editReply({ 
+              content: `❌ Failed to send test notification to <#${channel.id}>. Check the console logs for details.`, 
+              ephemeral: true 
+            });
+          }
+        } catch (error) {
+          console.error('Error in test command:', error);
+          await interaction.editReply({
+            content: 'Error sending test notification. Check the console logs for details.',
+            ephemeral: true
+          });
+        }
+        break;
+      }
+
       case 'checksales': {
         if (!isAdmin(interaction.member)) {
           await interaction.reply({ content: 'You need administrator permissions to use this command.', ephemeral: true });
@@ -1427,37 +1227,40 @@ client.on('interactionCreate', async (interaction) => {
         
         await interaction.deferReply({ ephemeral: true });
         try {
-          await interaction.editReply({ content: '🔍 Checking for new sales for this server... Please wait...', ephemeral: true });
+          // Clear the sales cache to ensure new notifications
+          lastProcessedSales.processedSales.clear();
+          console.log("🧹 Sales cache cleared by admin command");
           
-          // Only check sales for the current server, not all servers
-          const serverId = interaction.guildId;
-          const serverConfig = serverConfigs[serverId];
+          await interaction.editReply({ content: '🔍 Checking for new sales... Please wait...', ephemeral: true });
           
-          if (!serverConfig || !serverConfig.trackedCollections || Object.keys(serverConfig.trackedCollections).length === 0) {
-            await interaction.editReply({ 
-              content: '❌ No collections are being tracked on this server or notification channel is not set.', 
-              ephemeral: true 
-            });
-            return;
+          // Force sales check for all configured servers
+          const serverIds = Object.keys(serverConfigs);
+          let successCount = 0;
+          
+          for (const serverId of serverIds) {
+            const serverConfig = serverConfigs[serverId];
+            if (!serverConfig || !serverConfig.trackedCollections || Object.keys(serverConfig.trackedCollections).length === 0) {
+              continue;
+            }
+            
+            try {
+              await checkAndNotifySales(serverId);
+              successCount++;
+            } catch (checkError) {
+              console.error(`Error checking sales for server ${serverId}:`, checkError);
+            }
           }
           
-          try {
-            // Only check sales for this specific server
-            await checkAndNotifySales(serverId);
-            await interaction.editReply({ 
-              content: `✅ Sales check complete! Check your notification channel for any new sale notifications.`, 
-              ephemeral: true 
-            });
-          } catch (checkError) {
-            console.error(`Error checking sales for server ${serverId}:`, checkError);
-            await interaction.editReply({
-              content: '❌ Error checking for sales. Check the console logs for details.',
-              ephemeral: true
-            });
-          }
+          await interaction.editReply({ 
+            content: `✅ Sales check complete for ${successCount} servers! Check your notification channel for any new sale notifications.`, 
+            ephemeral: true 
+          });
         } catch (error) {
-          console.error('Error checking sales:', error);
-          await interaction.editReply({ content: 'An error occurred while checking for sales.', ephemeral: true });
+          console.error('Error in checksales command:', error);
+          await interaction.editReply({
+            content: '❌ Error checking for sales. Check the console logs for details.',
+            ephemeral: true
+          });
         }
         break;
       }
@@ -1468,14 +1271,155 @@ client.on('interactionCreate', async (interaction) => {
           .setTitle('NFT Sales Bot Commands')
           .setDescription('Here are the commands you can use:')
           .addFields(
-            { name: '/track <channel> <collection>', value: 'Track sales for a specific collection and set notification channel (Admin only)' },
-            { name: '/untrack <collection>', value: 'Stop tracking a collection. You can supply the address or the list index (Admin only)' },
-            { name: '/list', value: 'Show all currently tracked collections (with pagination) (Admin only)' },
+            { name: '/setchannel', value: 'Set the current channel for sales notifications (Admin only)' },
+            { name: '/track <collection>', value: 'Track sales for a specific collection (Monad contract address)' },
+            { name: '/untrack <collection>', value: 'Stop tracking a collection. You can supply the address or the list index' },
+            { name: '/list', value: 'Show all currently tracked collections (with pagination)' },
+            { name: '/test', value: 'Send a test notification to verify the bot can post messages' },
             { name: '/checksales', value: 'Force an immediate check for new sales (Admin only)' },
             { name: '/help', value: 'Show this help message' }
           );
         await interaction.reply({ embeds: [helpEmbed], ephemeral: true });
         break;
+
+      case 'debug-info': {
+        if (!isAdmin(interaction.member)) {
+          await interaction.reply({ content: 'You need administrator permissions to use this command.', ephemeral: true });
+          return;
+        }
+        
+        await interaction.deferReply({ ephemeral: true });
+        
+        try {
+          const guildId = interaction.guildId;
+          const serverConfig = serverConfigs[guildId] || { notificationChannelId: null, trackedCollections: {} };
+          
+          // Get notifications channel info
+          const notificationChannelId = serverConfig.notificationChannelId || serverConfig.notificationChannel;
+          let channelInfo = 'Not set';
+          
+          if (notificationChannelId) {
+            const channel = interaction.guild.channels.cache.get(notificationChannelId);
+            if (channel) {
+              channelInfo = `<#${channel.id}> (${channel.name})`;
+              
+              // Check permissions
+              const perms = channel.permissionsFor(client.user);
+              if (!perms.has('SendMessages') || !perms.has('EmbedLinks')) {
+                channelInfo += ' ⚠️ BOT MISSING PERMISSIONS';
+              } else {
+                channelInfo += ' ✅ Permissions OK';
+              }
+            } else {
+              channelInfo = `ID: ${notificationChannelId} (CHANNEL NOT FOUND)`;
+            }
+          }
+          
+          // Get tracking status
+          const collectionCount = Object.keys(serverConfig.trackedCollections || {}).length;
+          const collectionList = Object.entries(serverConfig.trackedCollections || {})
+            .map(([address, data]) => {
+              const name = data.name || address;
+              return `- ${name} (${address.substring(0, 8)}...)`;
+            })
+            .join('\n');
+          
+          // Get cache info
+          const cacheSize = lastProcessedSales.processedSales.size;
+          const lastCheckInfo = lastCheckTime ? lastCheckTime.toLocaleString() : 'Never';
+          
+          // Create a debug embed
+          const debugEmbed = new EmbedBuilder()
+            .setColor('#ff9900')
+            .setTitle('Bot Debug Information')
+            .setDescription(`Current configuration and status for this server`)
+            .addFields(
+              { name: 'Server ID', value: guildId, inline: true },
+              { name: 'Configuration File', value: SERVER_CONFIG_FILE, inline: true },
+              { name: 'Last Check Time', value: lastCheckInfo, inline: true },
+              { name: 'Notification Channel', value: channelInfo, inline: false },
+              { name: 'Collections Tracked', value: collectionCount > 0 ? 
+                `${collectionCount} collections\n${collectionList}` : 'None', inline: false },
+              { name: 'Sales Cache Size', value: `${cacheSize} entries`, inline: true },
+              { name: 'Check Interval', value: `${config.refreshInterval / 1000} seconds`, inline: true }
+            )
+            .setFooter({ text: `Bot Version: 1.4.0` })
+            .setTimestamp();
+            
+          await interaction.editReply({ embeds: [debugEmbed], ephemeral: true });
+          
+        } catch (error) {
+          console.error('Error in debug-info command:', error);
+          await interaction.editReply({
+            content: `Error generating debug info: ${error.message}`,
+            ephemeral: true
+          });
+        }
+        break;
+      }
+
+      case 'refresh-images': {
+        if (!isAdmin(interaction.member)) {
+          await interaction.reply({ content: 'You need administrator permissions to use this command.', ephemeral: true });
+          return;
+        }
+        
+        await interaction.deferReply({ ephemeral: true });
+        
+        try {
+          const trackedCollections = serverConfigs[interaction.guildId].trackedCollections;
+          if (!trackedCollections || Object.keys(trackedCollections).length === 0) {
+            await interaction.editReply('No collections are currently being tracked.');
+            return;
+          }
+          
+          let updatedCount = 0;
+          let failedCount = 0;
+          const collectionAddresses = Object.keys(trackedCollections);
+          
+          await interaction.editReply(`🔄 Refreshing images for ${collectionAddresses.length} collections...`);
+          
+          for (const address of collectionAddresses) {
+            try {
+              // Try to get fresh collection info
+              const collectionInfo = await fetchCollectionInfo(address);
+              
+              if (collectionInfo && collectionInfo.image) {
+                // Update the collection image if one was found
+                trackedCollections[address].image = collectionInfo.image;
+                updatedCount++;
+              } else {
+                // If no image found from APIs, try a special case for known collections
+                if (address === '0x3019bf1dfb84e5b46ca9d0eec37de08a59a41308') {
+                  trackedCollections[address].image = 'https://pbs.twimg.com/profile_images/1658957832532230145/WyFdTZ-L_400x400.jpg'; // Twitter image for NNS
+                  updatedCount++;
+                } else {
+                  failedCount++;
+                }
+              }
+            } catch (error) {
+              console.error(`Error refreshing image for collection ${address}:`, error);
+              failedCount++;
+            }
+          }
+          
+          // Save updated config
+          saveServerConfigs();
+          
+          // Create update confirmation embed
+          const refreshEmbed = new EmbedBuilder()
+            .setColor('#4caf50')
+            .setTitle('Collection Images Refreshed')
+            .setDescription(`Successfully refreshed images for ${updatedCount} collections.${failedCount > 0 ? `\n⚠️ Failed to refresh ${failedCount} collections.` : ''}`)
+            .setTimestamp();
+          
+          await interaction.editReply({ content: null, embeds: [refreshEmbed] });
+        } catch (error) {
+          console.error('Error refreshing collection images:', error);
+          await interaction.editReply('An error occurred while trying to refresh collection images.');
+        }
+        break;
+      }
     }
   } catch (error) {
     console.error('Error handling interaction:', error);
@@ -1678,106 +1622,118 @@ client.once('ready', async () => {
     }
   }, config.refreshInterval);
   
-  // Set up a periodic reset of API rate limit tracking (every hour)
-  setInterval(() => {
-    console.log('🔄 Resetting API key rate limit status');
-    apiKeyManager.resetRateLimits();
-  }, 60 * 60 * 1000); // Every hour
-  
   console.log('✅ Bot setup complete and ready to notify about NFT sales');
 });
 
 // Load server configurations
 loadServerConfigs();
 
-// Register slash commands 
+// Register slash commands
 registerSlashCommands();
 
 // Login to Discord
 client.login(config.discordToken);
 
-// Function to periodically check for collections sales 
+// Let's create a checkAndNotifySales function
 async function checkAndNotifySales(serverId) {
-  try {
-    // Check if the server is whitelisted
-    if (!isGuildWhitelisted(serverId)) {
-      console.log(`Skipping guild ${serverId} - not in whitelist`);
-      return;
-    }
-    
-    const serverConfig = serverConfigs[serverId];
-    if (!serverConfig || !serverConfig.trackedCollections || 
-        Object.keys(serverConfig.trackedCollections).length === 0 || 
-        !serverConfig.notificationChannelId) {
-      console.log(`⏩ Skipping guild ${serverId}: no collections tracked or no notification channel set`);
-      return;
-    }
+  const serverConfig = serverConfigs[serverId];
+  if (!serverConfig) {
+    console.log(`No configuration for server ${serverId}`);
+    return;
+  }
+  
+  // Handle both property names for backward compatibility
+  const notificationChannelId = serverConfig.notificationChannelId || serverConfig.notificationChannel;
+  
+  if (!notificationChannelId) {
+    console.log(`No notification channel for server ${serverId}`);
+    return;
+  }
 
-    // Get the guild and channel
+  try {
     const guild = client.guilds.cache.get(serverId);
     if (!guild) {
-      console.log(`Guild not found: ${serverId}`);
+      console.log(`Guild ${serverId} not found`);
       return;
     }
 
-    const channel = guild.channels.cache.get(serverConfig.notificationChannelId);
+    const channel = guild.channels.cache.get(notificationChannelId);
     if (!channel) {
-      console.log(`Notification channel not found for guild: ${guild.name}`);
+      console.log(`Channel ${notificationChannelId} not found in guild ${serverId}`);
       return;
     }
 
-    console.log(`Processing sales for guild: ${guild.name} (${serverId})`);
-    const collectionAddresses = Object.keys(serverConfig.trackedCollections);
-    console.log(`Total tracked collections: ${collectionAddresses.length}`);
-
-    // Process each collection for this server
-    for (const collectionAddr of collectionAddresses) {
-      console.log(`Checking sales for collection: ${collectionAddr}`);
-      const sales = await fetchReservoirSales([collectionAddr]);
+    console.log(`Running checkAndNotifySales for ${guild.name}`);
+    
+    // Get collection addresses for this server
+    const collectionAddresses = [];
+    
+    // Extract from tracked collections - handle both formats
+    if (serverConfig.trackedCollections) {
+      for (const key in serverConfig.trackedCollections) {
+        const collection = serverConfig.trackedCollections[key];
+        // Handle both string and object formats
+        const address = typeof collection === 'string' ? collection : collection.address;
+        if (address) collectionAddresses.push(address);
+      }
+    }
       
-      if (sales.length === 0) {
-        console.log(`No sales found for collection ${collectionAddr}`);
+    console.log(`Checking ${collectionAddresses.length} collections for ${guild.name}`);
+
+    if (collectionAddresses.length === 0) {
+      console.log(`No collections to check for server ${serverId}`);
+      return;
+    }
+
+    // Process Reservoir sales
+    console.log("Fetching sales via Reservoir API...");
+    const reservoirSales = await fetchReservoirSales(collectionAddresses);
+    console.log(`Detected ${reservoirSales.length} sales via Reservoir API`);
+    
+    // If no sales were detected, exit
+    if (reservoirSales.length === 0) {
+      return;
+    }
+
+    // Notify about each sale
+    for (const sale of reservoirSales) {
+      const saleId = sale.id || `reservoir_${Date.now()}`;
+      
+      // Check if we've already notified about this sale
+      if (lastProcessedSales.processedSales.has(saleId)) {
+        console.log(`🔄 Already notified about sale ${saleId}, skipping`);
         continue;
       }
+
+      // Create and send the embed
+      const embed = createSaleEmbed(sale);
       
-      // Process each sale
-      for (const sale of sales) {
-        const saleId = sale.id || `reservoir_${Date.now()}`;
+      const collectionName = sale.collection?.name || 
+                         sale.collection?.id || 
+                         'Unknown Collection';
+      
+      console.log(`🔔 SENDING NOTIFICATION for ${collectionName} sale (${saleId})`);
+      
+      try {
+        await channel.send({ embeds: [embed] });
+        console.log(`✅ NOTIFICATION SENT SUCCESSFULLY for ${collectionName}!`);
         
-        // Check if this sale has already been notified about for this collection
-        // This check is now based on the collection + sale ID rather than just sale ID
-        if (lastProcessedSales.processedSales.has(`${collectionAddr}_${saleId}`)) {
-          console.log(`Sale ${saleId} already processed for collection ${collectionAddr}, skipping`);
-          continue;
+        // Mark as notified - use set with timestamp
+        lastProcessedSales.processedSales.set(saleId, Date.now());
+        console.log(`📋 Added sale ${saleId} to processed cache`);
+        
+        // Trim cache if needed
+        if (lastProcessedSales.processedSales.size > MAX_CACHE_SIZE) {
+          const oldestKey = Array.from(lastProcessedSales.processedSales.keys())[0];
+          lastProcessedSales.processedSales.delete(oldestKey);
+          console.log(`🧹 Trimmed oldest sale from cache: ${oldestKey}`);
         }
-        
-        console.log(`New sale found for collection ${collectionAddr}: ${saleId}`);
-        
-        try {
-          // Create the embed
-          const embed = createSaleEmbed(sale);
-          
-          // Send the notification
-          console.log(`📤 Sending notification to #${channel.name} in ${guild.name}`);
-          await channel.send({ embeds: [embed] });
-          console.log(`✅ NOTIFICATION SENT SUCCESSFULLY for collection ${collectionAddr}!`);
-          
-          // Mark as notified with collection-specific ID
-          lastProcessedSales.processedSales.set(`${collectionAddr}_${saleId}`, Date.now());
-          console.log(`📋 Added sale ${saleId} to collection cache for ${collectionAddr}`);
-        } catch (sendError) {
-          console.error(`❌ ERROR SENDING NOTIFICATION: ${sendError.message}`);
-          console.error(`Channel: #${channel.name}, Guild: ${guild.name}, Sale ID: ${saleId}`);
-          
-          // Still add to cache to avoid repeatedly trying to send failed notifications
-          lastProcessedSales.processedSales.set(`${collectionAddr}_${saleId}`, Date.now());
-        }
+      } catch (sendError) {
+        console.error(`❌ ERROR SENDING NOTIFICATION: ${sendError.message}`);
       }
     }
   } catch (error) {
     console.error(`❌ Error checking and notifying sales for server ${serverId}:`, error.message);
-    console.error(error.stack);
-    throw error;
   }
 }
 
@@ -1823,7 +1779,7 @@ async function testNotification(guildId) {
       price: '0.0247',
       token: {
         tokenId: '456367',
-        name: 'Nad Name', // Just the name without "Service" to make it clearer for the "#token" format
+        name: 'Nad Name Service',
         // Use the reliable Twitter image for NNS
         image: 'https://pbs.twimg.com/profile_images/1658957832532230145/WyFdTZ-L_400x400.jpg'
       },
@@ -1856,9 +1812,6 @@ async function testNotification(guildId) {
  */
 async function initializeBot() {
   console.log('🚀 Initializing bot and setting up sales tracker...');
-  
-  // Validate whitelist configuration
-  validateWhitelist();
   
   // Initialize the lastCheckTime to track when we last checked for sales
   lastCheckTime = new Date();
@@ -1904,6 +1857,167 @@ async function initializeBot() {
   }
 }
 
+// Function to fetch collection info from Magic Eden API
+async function fetchMagicEdenCollectionInfo(collectionAddress) {
+  if (!collectionAddress) {
+    console.log('No collection address provided for fetchMagicEdenCollectionInfo');
+    return null;
+  }
+
+  console.log(`Fetching collection info from Magic Eden for: ${collectionAddress}`);
+  
+  // Special handling for Nad Name Service
+  if (collectionAddress === '0x3019bf1dfb84e5b46ca9d0eec37de08a59a41308') {
+    console.log('Using special image for Nad Name Service');
+    return {
+      name: 'Nad Name Service',
+      image: 'https://pbs.twimg.com/profile_images/1658957832532230145/WyFdTZ-L_400x400.jpg', // Twitter image for NNS
+      description: 'Nad Name Service is the native naming protocol for Monad.'
+    };
+  }
+  
+  try {
+    const url = `https://api-mainnet.magiceden.dev/v3/rtp/monad-testnet/collections/v7`;
+    
+    const response = await axios.get(url, {
+      params: {
+        contract: collectionAddress,
+      },
+      timeout: 5000
+    });
+
+    if (response.status === 200 && response.data) {
+      console.log(`Magic Eden API response:`, JSON.stringify(response.data).substring(0, 500));
+      
+      // Extract collection name and image from response
+      const collection = response.data;
+      
+      // Check for different possible image field names in the API response
+      const imageUrl = collection.image || 
+                       collection.imageUrl || 
+                       collection.logo ||
+                       collection.logoURI ||
+                       null;
+      
+      if (collection.name) {
+        console.log(`✅ Found collection name from Magic Eden: ${collection.name}`);
+        console.log(`✅ Collection image: ${imageUrl || 'None found'}`);
+        
+        return {
+          name: collection.name,
+          image: imageUrl,
+          description: collection.description || null
+        };
+      }
+    }
+    
+    console.log(`No collection data found from Magic Eden for ${collectionAddress}`);
+    return null;
+  } catch (error) {
+    console.error(`Error fetching collection info from Magic Eden for ${collectionAddress}:`, error.message);
+    if (error.response) {
+      console.error('Response status:', error.response.status);
+      console.error('Response data:', JSON.stringify(error.response.data).substring(0, 500));
+    }
+    return null;
+  }
+}
+
+// Update fetchCollectionInfo to try Magic Eden API first
+async function fetchCollectionInfo(collectionAddress) {
+  if (!collectionAddress) {
+    console.log('No collection address provided for fetchCollectionInfo');
+    return null;
+  }
+
+  console.log(`Fetching collection info for: ${collectionAddress}`);
+  
+  // Try Magic Eden API first
+  try {
+    const magicEdenInfo = await fetchMagicEdenCollectionInfo(collectionAddress);
+    if (magicEdenInfo && magicEdenInfo.name) {
+      console.log(`Using collection info from Magic Eden: ${magicEdenInfo.name}`);
+      return magicEdenInfo;
+    }
+  } catch (meError) {
+    console.error(`Error with Magic Eden API:`, meError.message);
+  }
+  
+  // Fallback to Reservoir API
+  try {
+    const url = `https://api-monad-testnet.reservoir.tools/collections/v6`;
+    
+    const response = await axios.get(url, {
+      params: {
+        contract: collectionAddress,
+      },
+      headers: {
+        'x-api-key': 'demo-api-key', // Replace with your Reservoir API key if needed
+      },
+      timeout: 5000
+    });
+
+    if (response.status === 200 && response.data && response.data.collections && response.data.collections.length > 0) {
+      const collection = response.data.collections[0];
+      console.log(`Found collection info from Reservoir: ${collection.name}`);
+      
+      // Log the structure to debug
+      console.log('Collection data structure:', JSON.stringify(collection).substring(0, 300));
+      
+      return {
+        name: collection.name || `Monad Collection ${collectionAddress.substring(0, 8)}...`,
+        image: collection.collectionImage || collection.image || null,
+        description: collection.description || null,
+        floorPrice: collection.floorAsk?.price?.amount?.native || null,
+        tokenCount: collection.tokenCount || null
+      };
+    } else {
+      console.log(`No collection data found from Reservoir for ${collectionAddress}`);
+      return {
+        name: `Monad Collection ${collectionAddress.substring(0, 8)}...`
+      };
+    }
+  } catch (error) {
+    console.error(`Error fetching collection info from Reservoir for ${collectionAddress}:`, error.message);
+    if (error.response) {
+      console.error('Response status:', error.response.status);
+      console.error('Response data:', JSON.stringify(error.response.data).substring(0, 500));
+    }
+    
+    return {
+      name: `Monad Collection ${collectionAddress.substring(0, 8)}...`
+    };
+  }
+}
+
+// Fix invalid image URL formats throughout the app
+function cleanImageUrl(url) {
+  if (!url) return null;
+  
+  try {
+    // Remove content type information if present
+    if (url.includes(';')) {
+      url = url.split(';')[0];
+    }
+    
+    // Fix broken URLs with .svg+xml format
+    url = url.replace('.svg+xml', '.svg');
+    
+    // For Reservoir URLs, ensure we have a valid image format
+    if (url.includes('reservoir.tools') && !url.match(/\.(jpeg|jpg|gif|png|svg|webp)($|\?)/i)) {
+      url += (url.includes('?') ? '&' : '?') + 'format=png';
+    }
+    
+    // Try to validate the URL
+    new URL(url);
+    
+    return url;
+  } catch (error) {
+    console.error(`Invalid image URL: ${url}`, error.message);
+    return null;
+  }
+}
+
 /**
  * Check a single collection for sales and add to cache (but don't notify)
  * @param {string} collectionAddress The collection address to check
@@ -1940,55 +2054,66 @@ async function checkSingleCollection(collectionAddress) {
   }
 }
 
-// Fix invalid image URL formats throughout the app
-function cleanImageUrl(url) {
-  if (!url) return null;
-  
-  try {
-    // Remove content type information if present
-    if (url.includes(';')) {
-      url = url.split(';')[0];
+// Now update the track command implementation to use this function
+          // Save config
+          saveServerConfigs();
+          
+          // Immediately check this collection for sales
+          console.log(`🔍 Immediately checking the newly added collection ${address} for sales...`);
+          try {
+            const salesCount = await checkSingleCollection(address);
+            console.log(`✅ Initial check complete for ${address}: Found ${salesCount} existing sales to cache`);
+          } catch (error) {
+            console.error(`❌ Error in initial collection check:`, error.message);
+          }
+          
+          // Create tracking confirmation embed with green sidebar that exactly matches the screenshot
+          const trackingEmbed = new EmbedBuilder()
+            .setColor('#4caf50') // Green color for the sidebar
+            .setTitle(`Now Tracking: ${collectionName}`)
+            .setDescription(`Successfully added to tracking list.`)
+            .addFields(
+              { name: 'Address', value: `${address}` },
+              { name: 'Source', value: collectionData.source || 'Contract Address', inline: true },
+              { name: 'Added By', value: `@${interaction.user.username}`, inline: true }
+            )
+            .addFields(
+              { name: 'How to Untrack', value: `Use \`/untrack collection:${address}\`\nor click untrack in the \`/list\`.` }
+            )
+            .setTimestamp();
+          
+          // Add collection thumbnail if available
+          if (collectionInfo && collectionInfo.image) {
+            trackingEmbed.setThumbnail(collectionInfo.image);
+          }
+          
+          await interaction.editReply({ content: null, embeds: [trackingEmbed] });
+        } catch (error) {
+          console.error('Error tracking collection:', error);
+          await interaction.editReply('An error occurred while trying to track the collection.');
+        }
+        break;
+      }
     }
-    
-    // Fix broken URLs with .svg+xml format
-    url = url.replace('.svg+xml', '.svg');
-    
-    // For Reservoir URLs, ensure we have a valid image format
-    if (url.includes('reservoir.tools') && !url.match(/\.(jpeg|jpg|gif|png|svg|webp)($|\?)/i)) {
-      url += (url.includes('?') ? '&' : '?') + 'format=png';
-    }
-    
-    // Try to validate the URL
-    new URL(url);
-    
-    return url;
   } catch (error) {
-    console.error(`Invalid image URL: ${url}`, error.message);
-    return null;
-  }
-}
-
-// Add validateWhitelist function
-function validateWhitelist() {
-  console.log(`\n======= WHITELIST CONFIGURATION =======`);
-  
-  if (!process.env.WHITELISTED_GUILDS || process.env.WHITELISTED_GUILDS.trim() === '') {
-    console.log(`⚠️ WHITELIST NOT CONFIGURED: Bot will work in ALL servers it joins`);
-    console.log(`To enable whitelist, add guild IDs to WHITELISTED_GUILDS in .env file`);
-  } else {
-    console.log(`✅ WHITELIST ENABLED: ${config.whitelistedGuilds.length} servers authorized`);
-    console.log(`Whitelisted server IDs: ${config.whitelistedGuilds.join(', ')}`);
-  }
-  
-  // Check if any current servers are not whitelisted
-  if (client.guilds.cache.size > 0) {
-    const nonWhitelisted = client.guilds.cache.filter(guild => !isGuildWhitelisted(guild.id));
-    if (nonWhitelisted.size > 0) {
-      console.log(`\n⚠️ BOT IS IN ${nonWhitelisted.size} NON-WHITELISTED SERVERS:`);
-      nonWhitelisted.forEach(guild => {
-        console.log(`- ${guild.name} (${guild.id})`);
-      });
+    console.error('Error handling interaction:', error);
+    // Try to respond if we haven't already
+    try {
+      if (interaction.deferred) {
+        await interaction.editReply({
+          content: 'An error occurred while processing your command. Please try again.',
+          ephemeral: true
+        });
+      } else if (!interaction.replied) {
+        await interaction.reply({
+          content: 'An error occurred while processing your command. Please try again.',
+          ephemeral: true
+        });
+      }
+    } catch (replyError) {
+      console.error('Failed to send error response:', replyError);
     }
   }
-  console.log(`=======================================\n`);
-}
+});
+
+// Add this function right after the shortenAddress function

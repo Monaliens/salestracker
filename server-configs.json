@@ -6,16 +6,47 @@
   "1350665107889324073": {
     "notificationChannelId": "1350665226147598386",
     "trackedCollections": {
-      "0xae280ca8dfaaf852b0af828cd72391ce7874fbb6": {
-        "address": "0xae280ca8dfaaf852b0af828cd72391ce7874fbb6",
-        "source": "Direct Address",
-        "name": "Lil Monaliens",
-        "image": "https://img.reservoir.tools/images/v2/monad-testnet/i9YO%2F4yHXUdJsWcTqhqvfwRo1aTYuAtkK%2FYeNr9SJKbHr1i1MjkJSOA3EomyoDd5o6yBfFHPI98GSpO3sqS2%2FAubTaF%2BZ7TbuvQ5dzBXmS3Ca8926HW0AeHzdViSRoOGzSuKIqPYmzzEb8iA%2FouekEE26b7xnO%2B%2BkoxB8NO3Hz8wVLBqUgLWTS28f2Pde4HmrIEDqM%2F%2B0o4EWLLm82nmoA%3D%3D?width=250",
-        "description": "The special testnet collection \"Lil Monaliens\" shows the Monaliens in their innocent, childlike forms.",
-        "floorPrice": 0.01,
-        "addedAt": "2025-03-16T05:03:16.051Z",
-        "addedBy": "342322534542475266"
+      "0x66b655de495268eb4c7b70bf4ac1ab4094589f93": {
+        "address": "0x66b655de495268eb4c7b70bf4ac1ab4094589f93",
+        "name": "overnads",
+        "addedAt": "2025-03-18T04:13:57.238Z",
+        "addedBy": "342322534542475266",
+        "source": "Contract Address",
+        "image": "https://img.reservoir.tools/images/v2/monad-testnet/xGIQsppdhx9jPELiWEASU2LsiUBmfVp%2Bclc%2FufPLbAeZkbIIdMQWrND1kpiC3Zk8zWq2JjL6qDi744rf32gJVkoTZHCY4Fnn2gJQE1HXisT9d55mjDJOErYfboPll%2FA%2F1zN%2BvD78IpsGySJABMzSF2yg9XNfxv%2Fv0Vy1xsg8hnItAl4ywlfpZafWJ4fDizhG7kZ6ektM1RyK3CM5cn45bg%3D%3D?width=250"
+      },
+      "0x78ed9a576519024357ab06d9834266a04c9634b7": {
+        "address": "0x78ed9a576519024357ab06d9834266a04c9634b7",
+        "name": "TheDaks",
+        "addedAt": "2025-03-20T12:01:35.948Z",
+        "addedBy": "342322534542475266",
+        "source": "Contract Address",
+        "image": "https://img.reservoir.tools/images/v2/monad-testnet/i9YO%2F4yHXUdJsWcTqhqvf5%2FEEjhsBi2TXBlrzvV3uC41QPySPXqGEXirnaA47%2BHziZD5H2zdh9AquCJk%2FwPL%2BlKU6TtUnF7lwfMbPHMjPi3iiycwHopcvMDceU8tiyrASBNJychY%2BiY5TQ54Y0hz3axo7E5pNuRGfBvtkc3XMaF%2FdVzznCIFYAqimclZ0wc6EC6XOOVx8MZg%2FWWSWeOcZQ%3D%3D?width=250"
       }
     }
+  },
+  "1353701714993217566": {
+    "notificationChannelId": "1353701907155386370",
+    "trackedCollections": {
+      "0x66b655de495268eb4c7b70bf4ac1ab4094589f93": {
+        "address": "0x66b655de495268eb4c7b70bf4ac1ab4094589f93",
+        "name": "overnads",
+        "addedAt": "2025-03-24T15:54:38.051Z",
+        "addedBy": "342322534542475266",
+        "source": "Contract Address",
+        "image": "https://img.reservoir.tools/images/v2/monad-testnet/xGIQsppdhx9jPELiWEASU2LsiUBmfVp%2Bclc%2FufPLbAeZkbIIdMQWrND1kpiC3Zk8zWq2JjL6qDi744rf32gJVkoTZHCY4Fnn2gJQE1HXisT9d55mjDJOErYfboPll%2FA%2F1zN%2BvD78IpsGySJABMzSF2yg9XNfxv%2Fv0Vy1xsg8hnItAl4ywlfpZafWJ4fDizhG7kZ6ektM1RyK3CM5cn45bg%3D%3D?width=250&format=png"
+      }
+    }
+  },
+  "1354552886092103751": {
+    "notificationChannelId": "1354553293157961860",
+    "trackedCollections": {}
+  },
+  "1354622712487870474": {
+    "notificationChannelId": "1354627745774305451",
+    "trackedCollections": {}
+  },
+  "1338272266143662080": {
+    "notificationChannelId": null,
+    "trackedCollections": {}
   }
 }
