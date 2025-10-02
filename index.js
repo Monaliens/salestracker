@@ -21,8 +21,10 @@ const path = require('path');
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent
+    GatewayIntentBits.GuildMessages
+    // Note: MessageContent and GuildMembers intents require privileged intent permission in Discord Developer Portal
+    // Enable them in the portal under Bot > Privileged Gateway Intents
+    // Then uncomment: GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers
   ]
 });
 
@@ -1687,14 +1689,36 @@ client.once('ready', async () => {
   console.log('✅ Bot setup complete and ready to notify about NFT sales');
 });
 
+// Error handling for Discord client
+client.on('error', (error) => {
+  console.error('❌ Discord client error:', error);
+});
+
+client.on('warn', (warning) => {
+  console.warn('⚠️ Discord client warning:', warning);
+});
+
+// Handle process errors
+process.on('uncaughtException', (error) => {
+  console.error('❌ Uncaught Exception:', error);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
 // Load server configurations
 loadServerConfigs();
 
 // Register slash commands 
 registerSlashCommands();
 
-// Login to Discord
-client.login(config.discordToken);
+// Login to Discord with better error handling
+client.login(config.discordToken).catch(error => {
+  console.error('❌ Failed to login to Discord:', error);
+  process.exit(1);
+});
 
 // Function to periodically check for collections sales 
 async function checkAndNotifySales(serverId) {
